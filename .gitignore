@@ -1,5 +1,6 @@
 ﻿data/raw/*.csv
 data/processed/*.png
+data/processed/*.csv
 vector_store/
 __pycache__/
 *.pyc
