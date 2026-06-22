@@ -1,0 +1,8 @@
+﻿data/raw/*.csv
+data/processed/*.png
+vector_store/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+venv/
+.env
