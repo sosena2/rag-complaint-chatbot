@@ -9,3 +9,4 @@ chromadb
 tqdm
 jupyter
 ipykernel
+python-dotenv
