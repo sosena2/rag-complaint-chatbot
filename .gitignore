@@ -1,4 +1,5 @@
 ﻿data/raw/*.csv
+data/raw/*.parquet
 data/processed/*.png
 data/processed/*.csv
 vector_store/
