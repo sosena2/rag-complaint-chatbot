@@ -1,81 +1,34 @@
-import os
 import gradio as gr
-from dotenv import load_dotenv
-import chromadb
-from sentence_transformers import SentenceTransformer
-from huggingface_hub import InferenceClient
+from src.rag_pipeline import RAGPipeline
 
 # ── setup ──────────────────────────────────────────────────────────────────
-load_dotenv()
-hf_token = os.environ.get("HF_TOKEN")
-
-client = chromadb.PersistentClient(path="./vector_store")
-collection = client.get_collection(name="complaint_chunks")
-
-embedder = SentenceTransformer("all-MiniLM-L6-v2")
-hf_client = InferenceClient(model="mistralai/Mistral-7B-Instruct-v0.2", token=hf_token)
-
-PROMPT_TEMPLATE = """You are a financial analyst assistant for CrediTrust. Your task is to answer questions \
-about customer complaints. Use the following retrieved complaint excerpts to formulate \
-your answer. If the context doesn't contain the answer, state that you don't have \
-enough information. Do not invent details that are not present in the context.
-
-Context:
-{context}
-
-Question: {question}
-
-Answer:"""
+rag = RAGPipeline()
 
 PRODUCT_OPTIONS = ["All", "Credit Card", "Personal Loan", "Savings Account", "Money Transfer"]
 
-# ── core logic ─────────────────────────────────────────────────────────────
-def retrieve(question, top_k=5, product_filter=None):
-    query_embedding = embedder.encode([question]).tolist()
-    where = {"product_category": product_filter} if product_filter and product_filter != "All" else None
-    results = collection.query(
-        query_embeddings=query_embedding,
-        n_results=top_k,
-        where=where
-    )
-    return {
-        "documents": results["documents"][0],
-        "metadatas": results["metadatas"][0],
-    }
-
-def build_prompt(question, retrieved_chunks):
-    context = "\n\n---\n\n".join(retrieved_chunks)
-    return PROMPT_TEMPLATE.format(context=context, question=question)
-
-def generate(prompt, max_new_tokens=300):
-    try:
-        response = hf_client.text_generation(
-            prompt, max_new_tokens=max_new_tokens, temperature=0.3, do_sample=True
-        )
-        return response.strip()
-    except Exception as e:
-        return f"[Generator error: {e}]"
-
-def answer_question(question, product_filter="All", top_k=5):
-    if not question.strip():
-        return "", ""
-
-    retrieved = retrieve(question, top_k=int(top_k), product_filter=product_filter)
-    prompt = build_prompt(question, retrieved["documents"])
-    answer_text = generate(prompt)
-
-    # format sources
+# ── helpers ────────────────────────────────────────────────────────────────
+def format_sources(sources):
+    if not sources:
+        return "*Sources will appear here after you ask a question.*"
     sources_md = ""
-    for i, (doc, meta) in enumerate(zip(retrieved["documents"], retrieved["metadatas"]), 1):
+    for i, s in enumerate(sources, 1):
         sources_md += (
             f"**Source {i}** — "
-            f"Product: `{meta.get('product_category', 'N/A')}` | "
-            f"Issue: `{meta.get('issue', 'N/A')}` | "
-            f"Complaint ID: `{meta.get('complaint_id', 'N/A')}`\n\n"
-            f"> {doc[:300]}...\n\n---\n\n"
+            f"Product: `{s.get('product_category', 'N/A')}` | "
+            f"Issue: `{s.get('issue', 'N/A')}` | "
+            f"Complaint ID: `{s.get('complaint_id', 'N/A')}`\n\n"
+            f"> {s['text'][:300]}...\n\n---\n\n"
         )
+    return sources_md
 
-    return answer_text, sources_md
+# ── core logic (now a generator, for streaming) ────────────────────────────
+def answer_question(question, product_filter="All", top_k=5):
+    if not question.strip():
+        yield "", "*Sources will appear here after you ask a question.*"
+        return
+
+    for partial_answer, sources in rag.answer_stream(question, top_k=int(top_k), product_filter=product_filter):
+        yield partial_answer, format_sources(sources)
 
 # ── UI ─────────────────────────────────────────────────────────────────────
 with gr.Blocks(title="CrediTrust Complaint Analyzer", theme=gr.themes.Soft()) as demo:
@@ -118,7 +71,6 @@ with gr.Blocks(title="CrediTrust Complaint Analyzer", theme=gr.themes.Soft()) as
     gr.Markdown("### Retrieved Sources")
     sources_box = gr.Markdown(value="*Sources will appear here after you ask a question.*")
 
-    # example questions
     gr.Examples(
         examples=[
             ["Why are people unhappy with Credit Cards?", "Credit Card", 5],
@@ -131,7 +83,6 @@ with gr.Blocks(title="CrediTrust Complaint Analyzer", theme=gr.themes.Soft()) as
         label="Example Questions"
     )
 
-    # wire up buttons
     submit_btn.click(
         fn=answer_question,
         inputs=[question_box, product_filter, top_k_slider],
