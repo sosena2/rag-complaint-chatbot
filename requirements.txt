@@ -10,3 +10,5 @@ tqdm
 jupyter
 ipykernel
 python-dotenv
+huggingface_hub
+pyarrow
